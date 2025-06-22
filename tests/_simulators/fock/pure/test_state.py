@@ -62,6 +62,41 @@ def test_PureFockState_reduced_preserves_Config():
     assert state._config.cutoff == 10
 
 
+def test_PureFockState_fock_amplitudes_map():
+    theta = 0.3
+    with pq.Program() as program:
+        pq.Q() | pq.StateVector([1, 0]) / np.sqrt(2)
+        pq.Q() | pq.StateVector([0, 1]) / 2
+
+        pq.Q() | pq.StateVector([0, 2]) / 2
+
+        pq.Q(0) | pq.Phaseshifter(theta)
+
+    simulator = pq.PureFockSimulator(d=2)
+    state = simulator.execute(program).state
+
+    expected_fock_amplitudes = {
+        (0, 1): 0.5 + 0.0j,
+        (0, 2): 0.5 + 0.0j,
+        (1, 0): 1 / np.sqrt(2) * np.exp(1j * theta),
+    }
+
+    actual_fock_amplitudes = state.fock_amplitudes_map
+
+    assert len(actual_fock_amplitudes.items()) == len(expected_fock_amplitudes.items())
+
+    for occupation_number, expected_ampl in expected_fock_amplitudes.items():
+        assert np.isclose(
+            actual_fock_amplitudes[occupation_number],
+            expected_ampl,
+        )
+
+    # Try some Fock states that are expected to have zero amplitudes
+    assert np.isclose(actual_fock_amplitudes[(0, 0)], 0.0)
+    assert np.isclose(actual_fock_amplitudes[(2, 1)], 0.0)
+    assert np.isclose(actual_fock_amplitudes[(122, 35)], 0.0)
+
+
 def test_PureFockState_fock_probabilities_map():
     with pq.Program() as program:
         pq.Q() | pq.StateVector([0, 1]) / 2
@@ -92,6 +127,23 @@ def test_PureFockState_fock_probabilities_map():
             actual_fock_probabilities[occupation_number],
             expected_probability,
         )
+
+
+def test_PureFockState_get_marginal_fock_probabilities():
+    with pq.Program() as program:
+        pq.Q() | pq.StateVector([0, 1]) / 2
+
+        pq.Q() | pq.StateVector([0, 2]) / 2
+        pq.Q() | pq.StateVector([2, 0]) / np.sqrt(2)
+
+    simulator = pq.PureFockSimulator(d=2)
+    state = simulator.execute(program).state
+
+    modes = (1,)
+    expected_probabilities = np.array([0.5, 0.25, 0.25, 0.0])
+    actual_probabilities = state.get_marginal_fock_probabilities(modes)
+
+    assert np.allclose(actual_probabilities, expected_probabilities)
 
 
 def test_PureFockState_quadratures_mean_variance():
@@ -143,9 +195,7 @@ def test_mean_position():
 
     config = pq.Config(cutoff=cutoff)
 
-    simulator = pq.PureFockSimulator(
-        d=d, config=config, connector=pq.TensorflowConnector()
-    )
+    simulator = pq.PureFockSimulator(d=d, config=config)
 
     state = simulator.execute(program).state
     mean = state.mean_position(mode=0)

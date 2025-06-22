@@ -13,9 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Tuple, Generator, Any, Dict, List
+from typing import DefaultDict, Optional, Tuple, Generator, Any, Dict, List
 
 import abc
+from collections import defaultdict
 import numpy as np
 from piquasso.api.config import Config
 from piquasso.api.state import State
@@ -23,6 +24,7 @@ from piquasso.api.connector import BaseConnector
 
 from piquasso._math.fock import get_fock_space_basis
 from piquasso.api.exceptions import InvalidModes
+from piquasso._simulators.plot import plot_wigner_function
 
 
 class BaseFockState(State, abc.ABC):
@@ -76,6 +78,16 @@ class BaseFockState(State, abc.ABC):
         """
         Resets the Fock state to a vacuum state.
         """
+
+    @property
+    def fock_amplitudes_map(self) -> DefaultDict[tuple, complex]:
+        """Probability amplitudes of Fock basis states representing the state."""
+        amplitude_map = defaultdict(complex)
+
+        for elem in self.nonzero_elements:
+            amplitude_map[elem[1]] = elem[0]
+
+        return amplitude_map
 
     @property
     @abc.abstractmethod
@@ -202,6 +214,58 @@ class BaseFockState(State, abc.ABC):
 
         return 0.5 * W * g**2
 
+    def plot_wigner(
+        self,
+        positions: List[float],
+        momentums: List[float],
+        mode: Optional[int] = None,
+    ) -> None:
+        r"""
+        Plots the Wigner function in phase space for a single mode using the
+        given positions and momentums.
+
+        Args:
+            positions (List[float]): List of position values (x-axis)
+            momentums (List[float]): List of momentum values (p-axis)
+            mode (int, optional):
+                Mode where Wigner function should be calculcated.
+
+        Note:
+            Only a single mode is supported.
+
+        Returns:
+            None: This method generates a plot and does not return a value.
+
+        """
+        if self._config.validate and mode is not None and mode > self.d - 1:
+            raise InvalidModes(
+                f"Mode {mode} is out of range for the state with {self.d} modes."
+            )
+
+        if mode is not None:
+            mode_tuple = (mode,)
+        else:
+            mode_tuple = None
+
+        if self._config.validate and self.d != 1 and mode_tuple is None:
+            raise InvalidModes(
+                "The Wigner function can only be plotted for a single mode: "
+                f"modes={mode_tuple} was specified."
+            )
+
+        fock_wigner_function_values = self.wigner_function(
+            positions=positions, momentums=momentums, modes=mode_tuple
+        )
+        x, p = np.meshgrid(positions, momentums)
+        xlist = x.tolist()
+        plist = p.tolist()
+
+        plot_wigner_function(
+            fock_wigner_function_values,
+            positions=xlist,
+            momentums=plist,
+        )
+
     def fidelity(self, state: "BaseFockState") -> float:
         r"""Calculates the state fidelity between two quantum states.
 
@@ -225,6 +289,18 @@ class BaseFockState(State, abc.ABC):
             np.linalg.eigvals(self.density_matrix @ state.density_matrix)
         )
         return np.abs(np.sum(geometric_mean)) ** 2
+
+    def get_marginal_fock_probabilities(self, modes: Tuple[int, ...]) -> np.ndarray:
+        """Return the particle number probabilities on a given subsystem.
+
+        Args:
+            modes (tuple[int, ...]): The indices of the modes to keep.
+
+        Returns:
+            numpy.ndarray: The marginal particle number detection probabilities.
+        """
+
+        return self.reduced(modes).fock_probabilities
 
     @abc.abstractmethod
     def get_purity(self):
